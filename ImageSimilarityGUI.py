@@ -7,7 +7,7 @@ import numpy as np
 from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
                              QLabel, QLineEdit, QPushButton, QFileDialog, 
                              QSpinBox, QDoubleSpinBox, QScrollArea, QGroupBox, 
-                             QMessageBox, QRadioButton, QComboBox, QStackedWidget,
+                             QMessageBox, QComboBox, QStackedWidget,
                              QProgressBar, QStyle, QDialog)
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QPixmap
@@ -25,6 +25,42 @@ import torchvision.transforms as transforms
 from sklearn.metrics.pairwise import cosine_similarity
 
 
+# --- 影像美感與品質評分演算法 (Aesthetic & Quality Score) ---
+def calculate_aesthetic_score(image_path):
+    """
+    綜合評估影像的美感與品質：
+    結合清晰度(模糊偵測)、對比度與色彩豐富度。分數越高代表品質越好。
+    """
+    try:
+        # 支援中文路徑讀取
+        img_data = np.fromfile(image_path, dtype=np.uint8)
+        img = cv2.imdecode(img_data, cv2.IMREAD_COLOR)
+        if img is None: 
+            return 0.0
+        
+        # 1. 清晰度 (Sharpness): 利用 Laplacian 變異數來偵測邊緣銳利度
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        sharpness = cv2.Laplacian(gray, cv2.CV_64F).var()
+        
+        # 2. 對比度 (Contrast): 灰階影像的標準差
+        contrast = gray.std()
+        
+        # 3. 色彩豐富度 (Colorfulness): 基於 Hasler and Suesstrunk (2003)
+        (B, G, R) = cv2.split(img.astype("float"))
+        rg = np.absolute(R - G)
+        yb = np.absolute(0.5 * (R + G) - B)
+        std_root = np.sqrt((np.std(rg) ** 2) + (np.std(yb) ** 2))
+        mean_root = np.sqrt((np.mean(rg) ** 2) + (np.mean(yb) ** 2))
+        colorfulness = std_root + (0.3 * mean_root)
+        
+        # 綜合評分公式 (對銳利度取 log 避免極端值主導，並進行權重分配)
+        score = (np.log1p(sharpness) * 20) + (contrast * 0.5) + (colorfulness * 0.5)
+        return float(score)
+    except Exception as e:
+        print(f"Error scoring {image_path}: {e}")
+        return 0.0
+
+
 # --- 自訂可點擊的圖片標籤 (用於彈出大圖) ---
 class ClickableLabel(QLabel):
     clicked = pyqtSignal(str)
@@ -32,7 +68,7 @@ class ClickableLabel(QLabel):
     def __init__(self, img_path, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.img_path = img_path
-        self.setCursor(Qt.CursorShape.PointingHandCursor) # 滑鼠移過去變手型
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setStyleSheet("border: 1px solid #DDDDDD; padding: 2px; background-color: white;")
 
     def mousePressEvent(self, event):
@@ -63,13 +99,38 @@ class ScannerThread(QThread):
             return
 
         self.progress_percent.emit(5)
+        
+        groups = []
+        single_files = []
 
+        # 執行分組
         if self.algo_mode == 'imagehash':
-            self._run_imagehash()
+            groups, single_files = self._run_imagehash()
         elif self.algo_mode == 'opencv':
-            self._run_opencv()
+            groups, single_files = self._run_opencv()
         elif self.algo_mode == 'ai':
-            self._run_ai()
+            groups, single_files = self._run_ai()
+
+        # 執行美感評分與組內排序
+        self.progress_update.emit("正在進行 AI 美感品質評分與篩選最佳圖片...")
+        scored_groups = []
+        total_groups = len(groups)
+        
+        for i, grp in enumerate(groups):
+            self.progress_percent.emit(90 + int((i / max(1, total_groups)) * 10))
+            grp_scored = []
+            for f in grp:
+                path = os.path.join(self.src_dir, f)
+                score = calculate_aesthetic_score(path)
+                grp_scored.append({'file': f, 'score': score})
+            
+            # 依分數降序排序 (最高分在前面)
+            grp_scored.sort(key=lambda x: x['score'], reverse=True)
+            scored_groups.append(grp_scored)
+
+        self.progress_update.emit(f"掃描與評分完成！找到 {len(scored_groups)} 組相似圖片。")
+        self.progress_percent.emit(100)
+        self.scan_finished.emit(scored_groups, single_files)
 
     def _run_imagehash(self):
         struct_thresh = self.params.get('struct', 10)
@@ -97,7 +158,7 @@ class ScannerThread(QThread):
 
         for i, file1 in enumerate(self.all_files):
             if i % max(1, total // 20) == 0:
-                self.progress_percent.emit(50 + int((i / total) * 50))
+                self.progress_percent.emit(50 + int((i / total) * 40))
 
             if file1 in grouped_files or file1 not in hashes_structure: continue
             current_group = [file1]
@@ -113,9 +174,7 @@ class ScannerThread(QThread):
                 grouped_files.update(current_group)
 
         single_files = [f for f in self.all_files if f not in grouped_files and f in hashes_structure]
-        self.progress_update.emit(f"掃描完成！找到 {len(groups)} 組相似圖片。")
-        self.progress_percent.emit(100)
-        self.scan_finished.emit(groups, single_files)
+        return groups, single_files
 
     def _run_opencv(self):
         match_thresh = self.params.get('match', 50)
@@ -148,7 +207,7 @@ class ScannerThread(QThread):
         for i, file1 in enumerate(file_list):
             if i % max(1, total_files // 20) == 0: 
                 self.progress_update.emit(f"比對進度: {i}/{total_files}...")
-                self.progress_percent.emit(50 + int((i / total_files) * 50))
+                self.progress_percent.emit(50 + int((i / total_files) * 40))
 
             if file1 in grouped_files: continue
             current_group = [file1]
@@ -168,9 +227,7 @@ class ScannerThread(QThread):
                 grouped_files.update(current_group)
 
         single_files = [f for f in self.all_files if f not in grouped_files and f in descriptors_dict]
-        self.progress_update.emit(f"掃描完成！找到 {len(groups)} 組相似圖片。")
-        self.progress_percent.emit(100)
-        self.scan_finished.emit(groups, single_files)
+        return groups, single_files
 
     def _run_ai(self):
         sim_thresh = self.params.get('sim', 0.90)
@@ -192,7 +249,6 @@ class ScannerThread(QThread):
                 from torchvision.models import efficientnet_b0, EfficientNet_B0_Weights
                 model = efficientnet_b0(weights=EfficientNet_B0_Weights.DEFAULT)
                 model.classifier = torch.nn.Identity()
-            # --- 新增中型模型 ---
             elif model_name == 'resnet50':
                 from torchvision.models import resnet50, ResNet50_Weights
                 model = resnet50(weights=ResNet50_Weights.DEFAULT)
@@ -201,7 +257,6 @@ class ScannerThread(QThread):
                 from torchvision.models import efficientnet_b2, EfficientNet_B2_Weights
                 model = efficientnet_b2(weights=EfficientNet_B2_Weights.DEFAULT)
                 model.classifier = torch.nn.Identity()
-            # --------------------
                 
             model.eval()
             model = model.to(device)
@@ -213,8 +268,7 @@ class ScannerThread(QThread):
         except Exception as e:
             self.progress_update.emit(f"AI 模型載入失敗: {e}")
             self.progress_percent.emit(0)
-            self.scan_finished.emit([], [])
-            return
+            return [], []
 
         features = {}
         total = len(self.all_files)
@@ -222,7 +276,7 @@ class ScannerThread(QThread):
         for idx, filename in enumerate(self.all_files):
             if idx % max(1, total // 20) == 0: 
                 self.progress_update.emit(f"提取語義特徵... ({idx}/{total})")
-                self.progress_percent.emit(20 + int((idx / total) * 40)) 
+                self.progress_percent.emit(20 + int((idx / total) * 30)) 
             path = os.path.join(self.src_dir, filename)
             try:
                 img = Image.open(path).convert('RGB')
@@ -240,7 +294,7 @@ class ScannerThread(QThread):
         
         for i, file1 in enumerate(file_list):
             if i % max(1, total_files // 20) == 0:
-                self.progress_percent.emit(60 + int((i / total_files) * 40))
+                self.progress_percent.emit(50 + int((i / total_files) * 40))
 
             if file1 in grouped_files: continue
             current_group = [file1]
@@ -258,12 +312,10 @@ class ScannerThread(QThread):
                 grouped_files.update(current_group)
 
         single_files = [f for f in self.all_files if f not in grouped_files and f in features]
-        self.progress_update.emit(f"掃描完成！找到 {len(groups)} 組相似圖片。")
-        self.progress_percent.emit(100)
-        self.scan_finished.emit(groups, single_files)
+        return groups, single_files
 
 
-# --- 主圖形介面 (左右分欄設計) ---
+# --- 主圖形介面 ---
 class ImageGrouperApp(QWidget):
     def __init__(self):
         super().__init__()
@@ -288,6 +340,8 @@ class ImageGrouperApp(QWidget):
         QPushButton#actionBtn { background-color: #107C41; color: white; border: none; font-weight: bold; padding: 8px; }
         QPushButton#actionBtn:hover { background-color: #0B5A2F; }
         QPushButton#actionBtn:disabled { background-color: #8CC2A0; }
+        QPushButton#singleActionBtn { background-color: #D83B01; color: white; font-weight: bold; border-radius: 4px; padding: 6px; }
+        QPushButton#singleActionBtn:hover { background-color: #A82E00; }
         QComboBox, QSpinBox, QDoubleSpinBox { padding: 4px; border: 1px solid #BDBDBD; border-radius: 4px; }
         QProgressBar { border: 1px solid #CCCCCC; border-radius: 4px; text-align: center; color: black; }
         QProgressBar::chunk { background-color: #0078D7; width: 10px; }
@@ -296,27 +350,26 @@ class ImageGrouperApp(QWidget):
         self.setStyleSheet(style)
 
     def initUI(self):
-        self.setWindowTitle('Image Similarity Pro')
+        self.setWindowTitle('Image Similarity Pro (美感篩選版)')
         self.resize(1100, 750)
         
-        # 核心佈局：左右分欄
         main_layout = QHBoxLayout()
         main_layout.setContentsMargins(10, 10, 10, 10)
         main_layout.setSpacing(15)
 
         # ==================== 左側：緊湊功能區 ====================
         left_panel = QWidget()
-        left_panel.setMaximumWidth(320) # 限制側邊欄最大寬度
+        left_panel.setMaximumWidth(320)
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(10)
 
         dir_icon = self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon)
 
-        # 1. 路徑設定區
+        # 1. 路徑設定區 (移除了輸出目錄)
         path_group = QGroupBox("📁 檔案目錄設定")
         path_layout = QVBoxLayout()
-        path_layout.addWidget(QLabel("輸入資料夾:"))
+        path_layout.addWidget(QLabel("輸入資料夾 (執行後建立 Trash 資料夾):"))
         in_layout = QHBoxLayout()
         self.input_entry = QLineEdit()
         in_layout.addWidget(self.input_entry)
@@ -325,16 +378,6 @@ class ImageGrouperApp(QWidget):
         btn_in.clicked.connect(self.browse_input)
         in_layout.addWidget(btn_in)
         path_layout.addLayout(in_layout)
-
-        path_layout.addWidget(QLabel("輸出資料夾:"))
-        out_layout = QHBoxLayout()
-        self.output_entry = QLineEdit()
-        out_layout.addWidget(self.output_entry)
-        btn_out = QPushButton()
-        btn_out.setIcon(dir_icon)
-        btn_out.clicked.connect(self.browse_output)
-        out_layout.addWidget(btn_out)
-        path_layout.addLayout(out_layout)
         path_group.setLayout(path_layout)
         left_layout.addWidget(path_group)
 
@@ -357,13 +400,7 @@ class ImageGrouperApp(QWidget):
         ai_layout.setContentsMargins(0, 5, 0, 0)
         ai_layout.addWidget(QLabel("AI 模型選擇:"))
         self.combo_ai_model = QComboBox()
-        self.combo_ai_model.addItems([
-            "mobilenet_v2", 
-            "resnet18", 
-            "efficientnet_b0", 
-            "resnet50",         # 新增中型模型
-            "efficientnet_b2"   # 新增中型模型
-        ])
+        self.combo_ai_model.addItems(["mobilenet_v2", "resnet18", "efficientnet_b0", "resnet50", "efficientnet_b2"])
         ai_layout.addWidget(self.combo_ai_model)
         
         sim_layout = QHBoxLayout()
@@ -408,21 +445,12 @@ class ImageGrouperApp(QWidget):
         # 3. 操作與進度區
         exec_group = QGroupBox("🚀 操作與執行")
         exec_layout = QVBoxLayout()
-        
-        mode_layout = QHBoxLayout()
-        self.radio_move = QRadioButton("移動")
-        self.radio_copy = QRadioButton("複製")
-        self.radio_move.setChecked(True)
-        mode_layout.addWidget(self.radio_move)
-        mode_layout.addWidget(self.radio_copy)
-        exec_layout.addLayout(mode_layout)
 
-        self.btn_scan = QPushButton("🔍 開始掃描與預覽")
+        self.btn_scan = QPushButton("🔍 開始掃描與美感評估")
         self.btn_scan.setObjectName("primaryBtn")
         self.btn_scan.clicked.connect(self.start_scan)
         exec_layout.addWidget(self.btn_scan)
 
-        # 狀態與進度條移到左側下方
         self.lbl_status = QLabel("就緒。")
         self.lbl_status.setWordWrap(True)
         self.lbl_status.setStyleSheet("color: #005A9E; font-size: 9pt; margin-top: 5px;")
@@ -432,16 +460,15 @@ class ImageGrouperApp(QWidget):
         self.progress_bar.setValue(0)
         exec_layout.addWidget(self.progress_bar)
 
-        self.btn_execute = QPushButton("✅ 確認執行分組")
-        self.btn_execute.setObjectName("actionBtn")
-        self.btn_execute.setEnabled(False)
-        self.btn_execute.clicked.connect(self.execute_action)
-        exec_layout.addWidget(self.btn_execute)
+        self.btn_execute_all = QPushButton("✅ 批量處理所有組 (移至 Trash)")
+        self.btn_execute_all.setObjectName("actionBtn")
+        self.btn_execute_all.setEnabled(False)
+        self.btn_execute_all.clicked.connect(self.execute_batch_action)
+        exec_layout.addWidget(self.btn_execute_all)
 
         exec_group.setLayout(exec_layout)
         left_layout.addWidget(exec_group)
         
-        # 將左側元件推到上方
         left_layout.addStretch()
         main_layout.addWidget(left_panel)
 
@@ -453,9 +480,7 @@ class ImageGrouperApp(QWidget):
         self.scroll_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.scroll_area.setWidget(self.scroll_content)
         
-        # stretch=1 讓右側佔據所有剩餘空間
         main_layout.addWidget(self.scroll_area, stretch=1) 
-
         self.setLayout(main_layout)
 
     def change_algo_params(self, index):
@@ -464,10 +489,6 @@ class ImageGrouperApp(QWidget):
     def browse_input(self):
         folder = QFileDialog.getExistingDirectory(self, "選擇輸入")
         if folder: self.input_entry.setText(folder)
-
-    def browse_output(self):
-        folder = QFileDialog.getExistingDirectory(self, "選擇輸出")
-        if folder: self.output_entry.setText(folder)
 
     def clear_scroll_area(self):
         for i in reversed(range(self.scroll_layout.count())): 
@@ -483,7 +504,7 @@ class ImageGrouperApp(QWidget):
 
         self.clear_scroll_area()
         self.btn_scan.setEnabled(False)
-        self.btn_execute.setEnabled(False)
+        self.btn_execute_all.setEnabled(False)
         self.progress_bar.setValue(0)
 
         algo_mode = self.combo_algo.currentData()
@@ -510,28 +531,27 @@ class ImageGrouperApp(QWidget):
     def update_progress(self, val):
         self.progress_bar.setValue(val)
 
-    def on_scan_finished(self, groups, single_files):
-        self.groups_data = groups
+    def on_scan_finished(self, scored_groups, single_files):
+        self.groups_data = scored_groups
         self.single_files = single_files
         self.btn_scan.setEnabled(True)
 
-        if not groups and not single_files:
+        if not scored_groups and not single_files:
             self.lbl_status.setText("沒有可處理的圖片。")
             return
 
         self.display_groups()
-        self.btn_execute.setEnabled(True)
-        self.lbl_status.setText(f"完成！共找到 {len(groups)} 組相似圖，{len(single_files)} 張獨立。")
+        if scored_groups:
+            self.btn_execute_all.setEnabled(True)
+        self.lbl_status.setText(f"完成！共找到 {len(scored_groups)} 組相似圖，{len(single_files)} 張為獨立圖片。")
 
     def show_full_image(self, img_path):
-        """點擊縮圖時彈出大圖查看"""
         dialog = QDialog(self)
         dialog.setWindowTitle(os.path.basename(img_path))
         layout = QVBoxLayout()
         lbl = QLabel()
         pixmap = QPixmap(img_path)
         
-        # 限制大圖最大不超過螢幕的 80%
         screen = QApplication.primaryScreen().geometry()
         max_w, max_h = int(screen.width() * 0.8), int(screen.height() * 0.8)
         if pixmap.width() > max_w or pixmap.height() > max_h:
@@ -546,111 +566,122 @@ class ImageGrouperApp(QWidget):
         src_dir = self.input_entry.text().strip()
         
         for idx, group in enumerate(self.groups_data):
-            group_box = QGroupBox(f"📂 分組 {idx + 1} (共 {len(group)} 張) - 勾選以保留分組")
-            group_box.setCheckable(True)
-            group_box.setChecked(True)
+            group_box = QGroupBox(f"📂 分組 {idx + 1} (共 {len(group)} 張)")
             group_box.setStyleSheet("QGroupBox { background-color: #FFFFFF; }")
             
-            self.group_widgets.append({'box': group_box, 'files': group})
-            
-            # 使用自動換行的流式佈局，讓右側空間能塞入更多圖片
             img_layout = QHBoxLayout()
             img_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
             
-            for filename in group:
+            for i, item in enumerate(group):
+                filename = item['file']
+                score = item['score']
                 path = os.path.join(src_dir, filename)
-                # 使用我們剛剛自訂的可點擊 Label
+                
+                v_layout = QVBoxLayout()
+                v_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+                
                 lbl_img = ClickableLabel(path) 
-                lbl_img.clicked.connect(self.show_full_image) # 綁定點擊事件
+                lbl_img.clicked.connect(self.show_full_image)
                 
                 try:
-                    # 預覽圖放大到 150x150，因為右側空間變大了
-                    pixmap = QPixmap(path).scaled(150, 150, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                    pixmap = QPixmap(path).scaled(160, 160, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
                     lbl_img.setPixmap(pixmap)
                 except Exception:
                     lbl_img.setText("[預覽失敗]")
+                v_layout.addWidget(lbl_img)
                 
-                img_layout.addWidget(lbl_img)
+                # 標籤顯示分數與狀態
+                if i == 0:
+                    lbl_info = QLabel(f"👑 最佳 (美感分: {score:.1f})")
+                    lbl_info.setStyleSheet("color: #D2691E; font-weight: bold; font-size: 11pt;")
+                else:
+                    lbl_info = QLabel(f"🗑️ 待刪 (美感分: {score:.1f})")
+                    lbl_info.setStyleSheet("color: #666666;")
+                
+                lbl_info.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                v_layout.addWidget(lbl_info)
+                
+                wrapper = QWidget()
+                wrapper.setLayout(v_layout)
+                img_layout.addWidget(wrapper)
             
-            # 這裡簡單加一個外層 Widget 讓水平圖片可以被良好包含
             scroll_widget = QWidget()
             scroll_widget.setLayout(img_layout)
-            
             inner_scroll = QScrollArea()
             inner_scroll.setWidgetResizable(True)
             inner_scroll.setWidget(scroll_widget)
-            inner_scroll.setFixedHeight(190) # 固定每組的高度，讓捲動更順暢
+            inner_scroll.setFixedHeight(230) 
             inner_scroll.setStyleSheet("border: none;")
+
+            # 處理單組的按鈕
+            btn_single_action = QPushButton("🗑️ 處理此組 (保留最佳，其餘移至 Trash)")
+            btn_single_action.setObjectName("singleActionBtn")
+            btn_single_action.clicked.connect(lambda checked, b=group_box, g=group: self.execute_single_group(b, g))
 
             box_layout = QVBoxLayout()
             box_layout.addWidget(inner_scroll)
+            box_layout.addWidget(btn_single_action)
             group_box.setLayout(box_layout)
             
             self.scroll_layout.addWidget(group_box)
+            self.group_widgets.append({'box': group_box, 'data': group})
 
-    def execute_action(self):
-        src = self.input_entry.text().strip()
-        out = self.output_entry.text().strip()
+    def move_files_to_trash(self, src_dir, filenames):
+        trash_dir = os.path.join(src_dir, "Trash")
+        os.makedirs(trash_dir, exist_ok=True)
+        moved_count = 0
+        for fname in filenames:
+            src_path = os.path.join(src_dir, fname)
+            dst_path = os.path.join(trash_dir, fname)
+            if os.path.exists(src_path):
+                try:
+                    shutil.move(src_path, dst_path)
+                    moved_count += 1
+                except Exception as e:
+                    print(f"移動失敗 {fname}: {e}")
+        return moved_count
+
+    def execute_single_group(self, box_widget, group_data):
+        src_dir = self.input_entry.text().strip()
+        # group_data[0] 是最佳圖片，group_data[1:] 移到 Trash
+        to_move = [item['file'] for item in group_data[1:]]
+        moved = self.move_files_to_trash(src_dir, to_move)
         
-        if not out:
-            QMessageBox.warning(self, "錯誤", "請選擇輸出資料夾！")
-            return
+        # 將 Widget 從 UI 移除
+        box_widget.deleteLater()
+        
+        # 將資料從清單移除
+        if group_data in self.groups_data:
+            self.groups_data.remove(group_data)
             
-        if not os.path.exists(out):
-            os.makedirs(out)
+        self.lbl_status.setText(f"成功處理單組，已將 {moved} 張圖片移至 Trash。")
+        
+        # 檢查是否都處理完了
+        if not self.groups_data:
+            self.btn_execute_all.setEnabled(False)
 
-        is_copy_mode = self.radio_copy.isChecked()
-        action_name = "複製" if is_copy_mode else "移動"
-        file_operation = shutil.copy2 if is_copy_mode else shutil.move
-
-        self.btn_execute.setEnabled(False)
-        self.lbl_status.setText(f"正在{action_name}檔案中...")
+    def execute_batch_action(self):
+        src_dir = self.input_entry.text().strip()
+        self.btn_execute_all.setEnabled(False)
         self.progress_bar.setValue(0)
-        QApplication.processEvents()
-
-        group_count = 0
-        final_single_files = list(self.single_files)
-        total_groups = len(self.group_widgets)
-
-        for i, widget_data in enumerate(self.group_widgets):
-            box = widget_data['box']
-            files = widget_data['files']
+        
+        total_groups = len(self.groups_data)
+        total_moved = 0
+        
+        for i, group_data in enumerate(list(self.groups_data)):
+            to_move = [item['file'] for item in group_data[1:]]
+            moved = self.move_files_to_trash(src_dir, to_move)
+            total_moved += moved
             
-            if box.isChecked():
-                group_count += 1
-                group_folder = os.path.join(out, f"Group_{group_count}")
-                os.makedirs(group_folder, exist_ok=True)
-                for f in files:
-                    src_path = os.path.join(src, f)
-                    if os.path.exists(src_path):
-                        file_operation(src_path, os.path.join(group_folder, f))
-            else:
-                final_single_files.extend(files)
-                
-            self.progress_bar.setValue(int(((i+1) / max(1, total_groups)) * 50)) 
+            self.progress_bar.setValue(int(((i+1) / max(1, total_groups)) * 100))
             QApplication.processEvents()
 
-        if final_single_files:
-            single_folder = os.path.join(out, "single")
-            os.makedirs(single_folder, exist_ok=True)
-            total_singles = len(final_single_files)
-            for i, f in enumerate(final_single_files):
-                src_path = os.path.join(src, f)
-                if os.path.exists(src_path):
-                    file_operation(src_path, os.path.join(single_folder, f))
-                
-                self.progress_bar.setValue(50 + int(((i+1) / total_singles) * 50)) 
-                QApplication.processEvents()
-
-        self.progress_bar.setValue(100)
-        QMessageBox.information(self, "任務完成", f"✅ 操作完成！\n成功建立 {group_count} 個群組。\n共 {len(final_single_files)} 張獨立圖片。")
-        
         self.clear_scroll_area()
         self.groups_data.clear()
-        self.single_files.clear()
+        
+        QMessageBox.information(self, "任務完成", f"✅ 批量處理完成！\n已將 {total_moved} 張較低美感評分的圖片移至 Trash。\n（最佳圖片與獨立圖片均留在原位）")
         self.lbl_status.setText("操作完畢。等待下一次任務。")
         self.progress_bar.setValue(0)
-
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
