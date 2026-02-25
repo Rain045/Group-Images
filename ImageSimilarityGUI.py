@@ -23,43 +23,122 @@ import cv2
 import torch
 import torchvision.transforms as transforms
 from sklearn.metrics.pairwise import cosine_similarity
+from transformers import CLIPProcessor, CLIPModel
 
+# --- 影像美感模型封裝 (自動檢測 GPU) ---
+class AestheticScorer:
+    def __init__(self):
+        # 自動偵測 GPU
+        if torch.cuda.is_available():
+            self.device = "cuda"
+        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            self.device = "mps"
+        else:
+            self.device = "cpu"
+        
+        self.model = None
+        self.processor = None
+        self.is_ready = False  # 新增旗標，確認模型是否加載成功
 
-# --- 影像美感與品質評分演算法 (Aesthetic & Quality Score) ---
+    def load_model(self):
+        """ 顯式加載模型，並確保移動到正確設備 """
+        if not self.is_ready:
+            try:
+                # 指定使用 CLIP 模型
+                model_id = "openai/clip-vit-base-patch32"
+                self.model = CLIPModel.from_pretrained(model_id).to(self.device)
+                self.processor = CLIPProcessor.from_pretrained(model_id)
+                self.labels = ["a high quality professional photo", "a low quality blurry messy photo"]
+                self.model.eval() # 設為評估模式，節省資源
+                self.is_ready = True
+                print(f"美感模型已成功載入設備: {self.device}")
+            except Exception as e:
+                print(f"模型載入失敗: {e}")
+                self.is_ready = False
+
+    def get_score(self, image_path):
+        """ 核心評分邏輯 """
+        try:
+            # A. 讀取影像 (支援中文路徑)
+            img_data = np.fromfile(image_path, dtype=np.uint8)
+            img_cv = cv2.imdecode(img_data, cv2.IMREAD_COLOR)
+            if img_cv is None: return 0.0
+
+            # B. 傳統技術分 (CV Score)
+            gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
+            sharpness = np.log1p(cv2.Laplacian(gray, cv2.CV_64F).var()) * 15
+            contrast = gray.std()
+            cv_score = sharpness + (contrast * 0.5)
+
+            # C. AI 語義分 (只有在模型準備好時才執行)
+            ai_score = 50.0 # 預設中位數
+            if self.is_ready:
+                pil_img = Image.fromarray(cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB))
+                inputs = self.processor(text=self.labels, images=pil_img, return_tensors="pt", padding=True).to(self.device)
+                with torch.no_grad():
+                    outputs = self.model(**inputs)
+                    probs = outputs.logits_per_image.softmax(dim=1)
+                    ai_score = probs[0][0].item() * 100
+
+            # 混合加權 (AI 70% + CV 30%)
+            return float((ai_score * 0.7) + (cv_score * 0.3))
+        except:
+            return 0.0
+
+# 建立全域單例，避免重複初始化模型
+_GLOBAL_SCORER = AestheticScorer()
+
+# --- 影像美感與品質評分演算法 (Aesthetic & Quality Score - 整合版) ---
 def calculate_aesthetic_score(image_path):
     """
     綜合評估影像的美感與品質：
-    結合清晰度(模糊偵測)、對比度與色彩豐富度。分數越高代表品質越好。
+    結合傳統指標 (清晰度、對比度、色彩) 與 Deep Learning 語義分析。
     """
     try:
-        # 支援中文路徑讀取
+        # 1. 支援中文路徑讀取
         img_data = np.fromfile(image_path, dtype=np.uint8)
         img = cv2.imdecode(img_data, cv2.IMREAD_COLOR)
-        if img is None: 
-            return 0.0
-        
-        # 1. 清晰度 (Sharpness): 利用 Laplacian 變異數來偵測邊緣銳利度
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        sharpness = cv2.Laplacian(gray, cv2.CV_64F).var()
-        
-        # 2. 對比度 (Contrast): 灰階影像的標準差
+        if img is None: return 0.0
+
+        # --- 第一部分：傳統技術指標 (CV Score) ---
+        h, w = img.shape[:2]
+        target_w = 800
+        img_resized = cv2.resize(img, (target_w, int(h * (target_w / w))))
+        gray = cv2.cvtColor(img_resized, cv2.COLOR_BGR2GRAY)
+
+        # A. 清晰度 (Sharpness) - 增加抗噪處理
+        blurred_gray = cv2.GaussianBlur(gray, (3, 3), 0)
+        sharpness = cv2.Laplacian(blurred_gray, cv2.CV_64F).var()
+        sharpness_score = np.log1p(sharpness) * 15 
+
+        # B. 對比度 (Contrast)
         contrast = gray.std()
-        
-        # 3. 色彩豐富度 (Colorfulness): 基於 Hasler and Suesstrunk (2003)
-        (B, G, R) = cv2.split(img.astype("float"))
+
+        # C. 色彩豐富度 (Colorfulness)
+        (B, G, R) = cv2.split(img_resized.astype("float"))
         rg = np.absolute(R - G)
         yb = np.absolute(0.5 * (R + G) - B)
-        std_root = np.sqrt((np.std(rg) ** 2) + (np.std(yb) ** 2))
-        mean_root = np.sqrt((np.mean(rg) ** 2) + (np.mean(yb) ** 2))
-        colorfulness = std_root + (0.3 * mean_root)
-        
-        # 綜合評分公式 (對銳利度取 log 避免極端值主導，並進行權重分配)
-        score = (np.log1p(sharpness) * 20) + (contrast * 0.5) + (colorfulness * 0.5)
-        return float(score)
+        colorfulness = np.sqrt(np.std(rg)**2 + np.std(yb)**2) + (0.3 * np.sqrt(np.mean(rg)**2 + np.mean(yb)**2))
+
+        # D. 曝光平衡懲罰 (Exposure Penalty)
+        exposure_penalty = abs(np.mean(gray) - 127.5) / 127.5
+
+        cv_score = (sharpness_score + contrast * 0.4 + colorfulness * 0.4) * (1 - 0.5 * exposure_penalty)
+
+        # --- 第二部分：語義美感指標 (AI Score) ---
+        # 轉換為 PIL 給 CLIP 模型使用
+        pil_img = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+        ai_score = _GLOBAL_SCORER.get_ai_score(pil_img)
+
+        # --- 第三部分：加權融合 ---
+        # AI 分數 (構圖/美感) 佔 70%，CV 分數 (清晰/品質) 佔 30%
+        final_score = (ai_score * 0.7) + (cv_score * 0.3)
+
+        return float(final_score)
+
     except Exception as e:
         print(f"Error scoring {image_path}: {e}")
         return 0.0
-
 
 # --- 自訂可點擊的圖片標籤 (用於彈出大圖) ---
 class ClickableLabel(QLabel):
@@ -236,7 +315,8 @@ class ScannerThread(QThread):
         self.progress_percent.emit(10)
         
         try:
-            device = torch.device("cpu")
+            device = "cuda" if torch.cuda.is_available() else \
+                      ("mps" if hasattr(torch.backends, "mps") and torch.backends.mps.is_available() else "cpu")
             if model_name == 'mobilenet_v2':
                 from torchvision.models import mobilenet_v2, MobileNet_V2_Weights
                 model = mobilenet_v2(weights=MobileNet_V2_Weights.DEFAULT)
