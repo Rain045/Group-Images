@@ -192,6 +192,16 @@ class ScannerThread(QThread):
                 from torchvision.models import efficientnet_b0, EfficientNet_B0_Weights
                 model = efficientnet_b0(weights=EfficientNet_B0_Weights.DEFAULT)
                 model.classifier = torch.nn.Identity()
+            # --- 新增中型模型 ---
+            elif model_name == 'resnet50':
+                from torchvision.models import resnet50, ResNet50_Weights
+                model = resnet50(weights=ResNet50_Weights.DEFAULT)
+                model.fc = torch.nn.Identity() 
+            elif model_name == 'efficientnet_b2':
+                from torchvision.models import efficientnet_b2, EfficientNet_B2_Weights
+                model = efficientnet_b2(weights=EfficientNet_B2_Weights.DEFAULT)
+                model.classifier = torch.nn.Identity()
+            # --------------------
                 
             model.eval()
             model = model.to(device)
@@ -347,7 +357,13 @@ class ImageGrouperApp(QWidget):
         ai_layout.setContentsMargins(0, 5, 0, 0)
         ai_layout.addWidget(QLabel("AI 模型選擇:"))
         self.combo_ai_model = QComboBox()
-        self.combo_ai_model.addItems(["mobilenet_v2", "resnet18", "efficientnet_b0"])
+        self.combo_ai_model.addItems([
+            "mobilenet_v2", 
+            "resnet18", 
+            "efficientnet_b0", 
+            "resnet50",         # 新增中型模型
+            "efficientnet_b2"   # 新增中型模型
+        ])
         ai_layout.addWidget(self.combo_ai_model)
         
         sim_layout = QHBoxLayout()
