@@ -230,8 +230,8 @@ class ScannerThread(QThread):
         return groups, single_files
 
     def _run_ai(self):
-        sim_thresh = self.params.get('sim', 0.90)
-        model_name = self.params.get('ai_model', 'mobilenet_v2')
+        sim_thresh = self.params.get('sim', 0.80)
+        model_name = self.params.get('ai_model', 'resnet18')
         self.progress_update.emit(f"載入 {model_name} 模型中...")
         self.progress_percent.emit(10)
         
@@ -400,7 +400,7 @@ class ImageGrouperApp(QWidget):
         ai_layout.setContentsMargins(0, 5, 0, 0)
         ai_layout.addWidget(QLabel("AI 模型選擇:"))
         self.combo_ai_model = QComboBox()
-        self.combo_ai_model.addItems(["mobilenet_v2", "resnet18", "efficientnet_b0", "resnet50", "efficientnet_b2"])
+        self.combo_ai_model.addItems(["resnet18", "mobilenet_v2", "efficientnet_b0", "resnet50", "efficientnet_b2"])
         ai_layout.addWidget(self.combo_ai_model)
         
         sim_layout = QHBoxLayout()
@@ -408,7 +408,7 @@ class ImageGrouperApp(QWidget):
         self.ai_sim_spin = QDoubleSpinBox()
         self.ai_sim_spin.setRange(0.50, 1.00)
         self.ai_sim_spin.setSingleStep(0.01)
-        self.ai_sim_spin.setValue(0.90)
+        self.ai_sim_spin.setValue(0.80)
         sim_layout.addWidget(self.ai_sim_spin)
         ai_layout.addLayout(sim_layout)
         self.param_stack.addWidget(ai_widget)
