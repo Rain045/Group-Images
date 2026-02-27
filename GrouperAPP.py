@@ -8,6 +8,133 @@ import subprocess
 import traceback
 
 # ==========================================
+# 全局样式表 (STYLESHEET)
+# ==========================================
+STYLESHEET = """
+QMainWindow { 
+    background-color: #0F0F0F; 
+}
+
+/* 针对侧边栏顶部进行微调，让其在视觉上更靠近窗口顶端 */
+#SidePanel { 
+    background-color: #161616; 
+    border-right: 1px solid #2D2D2D;
+}
+
+/* 全局窗口与基础背景 */
+QMainWindow, QDialog { 
+    background-color: #0F0F0F; 
+}
+QWidget { 
+    color: #E0E0E0; 
+    font-family: "Segoe UI", "PingFang SC", sans-serif; 
+}
+
+/* 解决 QListWidget 可能出现的白边或默认背景 */
+QListWidget { 
+    background-color: #0F0F0F; 
+    border: none; 
+    outline: none; 
+}
+
+/* 列表项背景 */
+QListWidget::item { 
+    background-color: #1A1A1A; 
+    margin: 5px 10px; 
+    border-radius: 8px; 
+    border: 1px solid #262626; 
+}
+QListWidget::item:selected { 
+    background-color: #262626; 
+    border: 1px solid #0078D4; 
+}
+
+/* 标题样式 */
+#SideTitle { 
+    color: #FFFFFF; 
+    font-size: 24px; 
+    font-weight: bold; 
+    margin-bottom: 10px; 
+    padding: 5px;
+}
+
+/* 按钮样式：确保即便在非 Focus 状态下也是深色的 */
+QPushButton { 
+    background-color: #2D2D2D; 
+    color: #FFFFFF; 
+    border: 1px solid #3D3D3D; 
+    border-radius: 6px; 
+    padding: 8px; 
+    font-weight: 500; 
+}
+QPushButton:hover { 
+    background-color: #3D3D3D; 
+}
+QPushButton:disabled {
+    background-color: #1A1A1A;
+    color: #555555;
+}
+
+QLineEdit {
+    background-color: #1A1A1A; 
+    color: #FFFFFF; 
+    border: 1px solid #333333;
+    border-radius: 4px; 
+    padding: 6px 10px; 
+}
+
+/* 针对 QComboBox (下拉框) 进行独立高对比度优化 */
+QComboBox {
+    background-color: #1A1A1A; 
+    color: #FFFFFF; 
+    border: 1px solid #333333;
+    border-radius: 4px; 
+    padding: 6px 10px; 
+}
+
+/* 鼠标悬浮时边框高亮 */
+QComboBox:hover {
+    border: 1px solid #555555;
+}
+
+/* 修复下拉框展开后的列表文字对比度和背景 */
+QComboBox QAbstractItemView {
+    background-color: #252525;    
+    color: #FFFFFF;               
+    border: 1px solid #3D3D3D;    
+    selection-background-color: #0078D4; 
+    selection-color: #FFFFFF;     
+    outline: none;                
+}
+
+/* 滚动条深色化 */
+QScrollBar:vertical {
+    border: none;
+    background: #0F0F0F;
+    width: 10px;
+}
+QScrollBar::handle:vertical {
+    background: #333333;
+    border-radius: 5px;
+}
+
+/* 标签提示色 */
+QLabel#Hint { 
+    color: #0078D4; 
+    font-weight: bold; 
+    text-transform: uppercase; 
+    font-size: 11px; 
+    margin-top: 15px; 
+}
+
+/* 修改 QSplitter 分割线，去除默认的刺眼白边 */
+QSplitter::handle {
+    background-color: #2D2D2D; 
+    width: 1px;
+}
+"""
+
+# ==========================================
 # 1. 基础依赖与环境检测
 # ==========================================
 import numpy as np
@@ -270,7 +397,7 @@ class ImageViewerDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("内置图像预览")
         self.resize(900, 700)
-        self.setStyleSheet("background-color: #1e1f22; color: white;")
+        # 使用全局背景色
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         
@@ -303,15 +430,16 @@ class ImageCard(QFrame):
         self.setToolTip("双击预览 | 长按拖拽以更换分组")
         self.drag_start_pos = None
         
+        # 适配新的高对比度样式
         self.setStyleSheet("""
             ImageCard { 
-                background-color: #2b2d31; /* 卡片默认深色 */
-                border-radius: 10px; 
-                border: 1px solid #1e1f22; 
+                background-color: #1A1A1A;
+                border-radius: 8px; 
+                border: 1px solid #262626; 
             }
             ImageCard:hover { 
-                border: 2px solid #5865F2; 
-                background-color: #383a40; /* 鼠标悬浮时提亮一点点 */
+                border: 1px solid #0078D4; 
+                background-color: #262626; 
             }
         """)
         
@@ -339,7 +467,7 @@ class ImageCard(QFrame):
 
         self.action_btn = QPushButton("↺" if self.is_trash_mode else "×", self)
         color = "#23A559" if self.is_trash_mode else "#DA373C"
-        self.action_btn.setStyleSheet(f"QPushButton {{ background-color: {color}; color: white; border-radius: 12px; font-weight: bold; border: none; }}")
+        self.action_btn.setStyleSheet(f"QPushButton {{ background-color: {color}; color: white; border-radius: 12px; font-weight: bold; border: none; padding: 0; }}")
         self.action_btn.setFixedSize(24, 24)
         self.action_btn.move(120, 6)
         self.action_btn.hide()
@@ -435,13 +563,7 @@ class ImageGrouperApp(QMainWindow):
         super().__init__()
         self.setWindowTitle("Image Grouper AI - Core")
         self.resize(1280, 800)
-        self.setStyleSheet("""
-            QMainWindow { background-color: #1e1f22; font-family: 'Segoe UI', 'Microsoft YaHei'; }
-            QScrollBar:vertical { background: #2b2d31; width: 12px; }
-            QScrollBar::handle:vertical { background: #4e5058; border-radius: 6px; min-height: 20px; }
-            QScrollBar::handle:vertical:hover { background: #62656d; }
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }
-        """)
+        # 全局样式交由 QApplication 应用 STYLESHEET
         
         self.embeddings_cache = {}
         self.current_groups = {} 
@@ -474,32 +596,30 @@ class ImageGrouperApp(QMainWindow):
         # ====== 侧边栏 ======
         sidebar = QFrame()
         sidebar.setFixedWidth(340)
-        sidebar.setStyleSheet("background-color: #2b2d31; border-right: 1px solid #1e1f22;")
+        sidebar.setObjectName("SidePanel") # 使用新 CSS 指定的 ID
+        
         side_layout = QVBoxLayout(sidebar)
         side_layout.setContentsMargins(24, 28, 24, 28)
         side_layout.setSpacing(18)
 
         title = QLabel("AI 图像分组引擎")
-        title.setFont(QFont("Segoe UI", 18, QFont.Weight.Bold))
-        title.setStyleSheet("color: #F2F3F5; border: none;")
+        title.setObjectName("SideTitle") # 使用新 CSS 指定的 ID
         side_layout.addWidget(title)
 
         self.btn_select_dir = QPushButton("📁 浏览目标文件夹")
         self.btn_select_dir.setFixedHeight(44)
-        self.btn_select_dir.setStyleSheet("QPushButton { background-color: #5865F2; color: white; border-radius: 6px; font-size: 14px; font-weight: bold; } QPushButton:hover { background-color: #4752C4; }")
+        # 保留关键的主色调与粗体，基础样式让全局 CSS 处理
+        self.btn_select_dir.setStyleSheet("QPushButton { background-color: #0078D4; font-weight: bold; } QPushButton:hover { background-color: #005A9E; }")
         self.btn_select_dir.clicked.connect(self.select_directory)
         side_layout.addWidget(self.btn_select_dir)
         
         self.lbl_dir = QLabel("未选择文件夹")
         self.lbl_dir.setStyleSheet("color: #949BA4; font-size: 12px; border: none;")
         side_layout.addWidget(self.lbl_dir)
-
-        combo_style = "QComboBox { padding: 8px; background: #1e1f22; border: 1px solid #383a40; border-radius: 6px; color: #DBDEE1; }"
         
         side_layout.addWidget(self.create_label("推理引擎 (Backend):"))
         self.combo_backend = QComboBox()
         self.combo_backend.addItems(["OpenVINO (Intel CPU 最优)", "PyTorch (CPU)", "PyTorch (CUDA)"])
-        self.combo_backend.setStyleSheet(combo_style)
         self.combo_backend.currentIndexChanged.connect(self.toggle_ov_selector)
         side_layout.addWidget(self.combo_backend)
 
@@ -511,11 +631,11 @@ class ImageGrouperApp(QMainWindow):
         ov_hbox = QHBoxLayout()
         self.inp_ov_path = QLineEdit()
         self.inp_ov_path.setPlaceholderText("选择或输入 openvino_model.xml 路径")
-        self.inp_ov_path.setStyleSheet("QLineEdit { padding: 6px; background: #1e1f22; color: white; border: 1px solid #383a40; border-radius: 4px; }")
+        
         btn_ov_browse = QPushButton("...")
         btn_ov_browse.setFixedSize(30, 30)
-        btn_ov_browse.setStyleSheet("QPushButton { background-color: #383a40; color: white; border-radius: 4px; }")
         btn_ov_browse.clicked.connect(self.browse_ov_model)
+        
         ov_hbox.addWidget(self.inp_ov_path)
         ov_hbox.addWidget(btn_ov_browse)
         ov_layout.addLayout(ov_hbox)
@@ -523,14 +643,12 @@ class ImageGrouperApp(QMainWindow):
 
         self.btn_preproc = QPushButton("1. 提取全量特征")
         self.btn_preproc.setFixedHeight(40)
-        self.btn_preproc.setStyleSheet("QPushButton { background-color: #383a40; color: #DBDEE1; border-radius: 6px; font-weight: bold; } QPushButton:hover { background-color: #404249; color: white; } QPushButton:disabled { background-color: #2b2d31; color: #5c5e66; border: 1px solid #383a40; }")
         self.btn_preproc.clicked.connect(self.run_preprocessing)
         side_layout.addWidget(self.btn_preproc)
 
         side_layout.addWidget(self.create_label("分组模式:"))
         self.combo_mode = QComboBox()
         self.combo_mode.addItems(["准分类模式 (Text-Guided)", "AI 发现模式 (Auto-Cluster)", "我的专属规则 (SVM进化)"])
-        self.combo_mode.setStyleSheet(combo_style)
         self.combo_mode.currentIndexChanged.connect(self.switch_mode_ui)
         side_layout.addWidget(self.combo_mode)
         
@@ -540,7 +658,6 @@ class ImageGrouperApp(QMainWindow):
         page_text = QWidget(); l_text = QVBoxLayout(page_text); l_text.setContentsMargins(0, 0, 0, 0)
         self.inp_tags = QLineEdit()
         self.inp_tags.setPlaceholderText("如: 猫, 海滩, 建筑...")
-        self.inp_tags.setStyleSheet("QLineEdit { padding: 10px; background: #1e1f22; color: white; border: 1px solid #383a40; border-radius: 6px; }")
         l_text.addWidget(self.create_label("目标类别 (逗号分隔):"))
         l_text.addWidget(self.inp_tags)
         self.stack_mode.addWidget(page_text)
@@ -550,7 +667,6 @@ class ImageGrouperApp(QMainWindow):
         self.combo_eps = QComboBox()
         self.combo_eps.addItems(["细粒度", "平衡 (推荐)", "粗粒度"])
         self.combo_eps.setCurrentIndex(1)
-        self.combo_eps.setStyleSheet(combo_style)
         l_ai.addWidget(self.create_label("聚类灵敏度 (DBSCAN):"))
         l_ai.addWidget(self.combo_eps)
         self.stack_mode.addWidget(page_ai)
@@ -558,30 +674,29 @@ class ImageGrouperApp(QMainWindow):
         # Page 2: SVM
         page_svm = QWidget(); l_svm = QVBoxLayout(page_svm); l_svm.setContentsMargins(0, 0, 0, 0)
         svm_hbox = QHBoxLayout()
-        self.btn_learn = QPushButton("🧠 吸收经验并进化")
+        self.btn_learn = QPushButton("🧠 吸收经验")
         self.btn_learn.setFixedHeight(36)
-        self.btn_learn.setStyleSheet("QPushButton { background-color: #E67E22; color: white; border-radius: 4px; font-weight: bold; } QPushButton:hover { background-color: #D35400; }")
+        # 覆写按钮特定的背景色以便区分功能，同时遵循全局的边框圆角
+        self.btn_learn.setStyleSheet("QPushButton { background-color: #D83B01; font-weight: bold; } QPushButton:hover { background-color: #EA4300; }")
         self.btn_learn.clicked.connect(self.learn_current_groups)
         
         self.btn_import_rule = QPushButton("📥 导入")
         self.btn_import_rule.setFixedSize(50, 36)
-        self.btn_import_rule.setStyleSheet("QPushButton { background-color: #383a40; color: white; border-radius: 4px; }")
         self.btn_import_rule.clicked.connect(self.import_rules)
         
-        # 🟢 新增：洗脑后悔药按钮
         self.btn_clear_mem = QPushButton("🧹 洗脑")
         self.btn_clear_mem.setFixedSize(50, 36)
-        self.btn_clear_mem.setStyleSheet("QPushButton { background-color: #DA373C; color: white; border-radius: 4px; }")
+        self.btn_clear_mem.setStyleSheet("QPushButton { background-color: #A4262C; } QPushButton:hover { background-color: #C50F1F; }")
         self.btn_clear_mem.clicked.connect(self.clear_memory)
         
         svm_hbox.addWidget(self.btn_learn)
         svm_hbox.addWidget(self.btn_import_rule)
-        svm_hbox.addWidget(self.btn_clear_mem) # 🟢 加入布局
+        svm_hbox.addWidget(self.btn_clear_mem) 
         l_svm.addWidget(self.create_label("持续学习与协同:"))
         l_svm.addLayout(svm_hbox)
         
         self.lbl_svm_info = QLabel(f"当前记忆体量: {len(self.memory_db)} 张特征样本")
-        self.lbl_svm_info.setStyleSheet("color: #23A559; font-size: 11px;")
+        self.lbl_svm_info.setStyleSheet("color: #107C41; font-size: 11px;")
         l_svm.addWidget(self.lbl_svm_info)
         self.stack_mode.addWidget(page_svm)
 
@@ -589,20 +704,19 @@ class ImageGrouperApp(QMainWindow):
 
         self.btn_group = QPushButton("2. 执行 AI 分组")
         self.btn_group.setFixedHeight(48)
-        self.btn_group.setStyleSheet("QPushButton { background-color: #23A559; color: white; border-radius: 6px; font-weight: bold; font-size: 14px; } QPushButton:hover { background-color: #1D8749; } QPushButton:disabled { background-color: #2b2d31; color: #5c5e66; }")
+        self.btn_group.setStyleSheet("QPushButton { background-color: #107C41; font-weight: bold; font-size: 14px; } QPushButton:hover { background-color: #14994E; }")
         self.btn_group.clicked.connect(self.run_grouping)
         side_layout.addWidget(self.btn_group)
         
         side_layout.addWidget(self.create_label("快捷操作:"))
         self.btn_view_trash = QPushButton("🗑️ 垃圾回收站")
         self.btn_view_trash.setFixedHeight(34)
-        self.btn_view_trash.setStyleSheet("QPushButton { background-color: #383a40; color: #DBDEE1; border-radius: 6px; }")
         self.btn_view_trash.clicked.connect(self.view_trash)
         side_layout.addWidget(self.btn_view_trash)
 
         side_layout.addStretch()
         
-        # 底部状态布局：Label + 悬浮中止图标
+        # 底部状态布局
         status_layout = QHBoxLayout()
         self.lbl_status = QLabel("就绪")
         self.lbl_status.setStyleSheet("color: #949BA4; font-size: 12px; font-weight: bold;")
@@ -610,7 +724,7 @@ class ImageGrouperApp(QMainWindow):
         self.btn_stop_icon = QPushButton("⏹️")
         self.btn_stop_icon.setFixedSize(22, 22)
         self.btn_stop_icon.setToolTip("强行中止任务")
-        self.btn_stop_icon.setStyleSheet("QPushButton { background-color: #DA373C; color: white; border-radius: 11px; font-weight: bold; border: none; } QPushButton:hover { background-color: #A1282D; }")
+        self.btn_stop_icon.setStyleSheet("QPushButton { background-color: #A4262C; border-radius: 11px; padding: 0; } QPushButton:hover { background-color: #C50F1F; }")
         self.btn_stop_icon.clicked.connect(self.stop_worker)
         self.btn_stop_icon.hide()
         
@@ -622,17 +736,18 @@ class ImageGrouperApp(QMainWindow):
         self.progress_bar = QProgressBar()
         self.progress_bar.setFixedHeight(6)
         self.progress_bar.setTextVisible(False)
-        self.progress_bar.setStyleSheet("QProgressBar { background-color: #1e1f22; border: none; border-radius: 3px; } QProgressBar::chunk { background-color: #5865F2; }")
+        self.progress_bar.setStyleSheet("QProgressBar { background-color: #1A1A1A; border: none; border-radius: 3px; } QProgressBar::chunk { background-color: #0078D4; }")
         side_layout.addWidget(self.progress_bar)
 
         main_layout.addWidget(sidebar)
 
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
-        self.scroll_area.setStyleSheet("QScrollArea { border: none; background-color: #1e1f22; }")
+        # 匹配新样式表的 #0F0F0F 主背景
+        self.scroll_area.setStyleSheet("QScrollArea { border: none; background-color: #0F0F0F; }")
+        
         self.viewport = QWidget()
-        # 🟢 新增下面这一行，强制锁定内部面板为深色，防止浅色穿透
-        self.viewport.setStyleSheet("background-color: #18191c;")
+        self.viewport.setStyleSheet("background-color: #0F0F0F;")
         self.view_layout = QVBoxLayout(self.viewport)
         self.view_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.view_layout.setContentsMargins(30, 30, 30, 30)
@@ -645,7 +760,7 @@ class ImageGrouperApp(QMainWindow):
 
     def create_label(self, text):
         lbl = QLabel(text)
-        lbl.setStyleSheet("color: #B5BAC1; font-size: 12px; font-weight: bold;")
+        lbl.setObjectName("Hint") # 使用新 CSS 指定的 ID
         return lbl
         
     def toggle_ov_selector(self):
@@ -680,7 +795,6 @@ class ImageGrouperApp(QMainWindow):
         keys_to_remove = [k for k in self.embeddings_cache.keys() if k not in self.target_files]
         for k in keys_to_remove: del self.embeddings_cache[k]
             
-        # 强制复写 pkl，保证硬盘数据实时性
         if keys_to_remove:
             try:
                 with open(os.path.join(self.current_folder, ".embeddings_cache.pkl"), "wb") as f:
@@ -691,11 +805,11 @@ class ImageGrouperApp(QMainWindow):
 
         if self.missing_in_cache:
             self.btn_preproc.setText(f"1. 提取新特征 ({len(self.missing_in_cache)}张增量)")
-            self.btn_preproc.setStyleSheet("QPushButton { background-color: #5865F2; color: white; border-radius: 6px; font-weight: bold; }")
+            self.btn_preproc.setStyleSheet("QPushButton { background-color: #0078D4; font-weight: bold; } QPushButton:hover { background-color: #005A9E; }")
             self.btn_preproc.setEnabled(True)
         else:
             self.btn_preproc.setText("特征已最新 ✓ (可直接分组)")
-            self.btn_preproc.setStyleSheet("QPushButton { background-color: #2b2d31; color: #23A559; border: 1px solid #23A559; border-radius: 6px; font-weight: bold; }")
+            self.btn_preproc.setStyleSheet("QPushButton { background-color: #1A1A1A; color: #107C41; border: 1px solid #107C41; font-weight: bold; }")
             self.btn_preproc.setEnabled(False)
 
     def select_directory(self):
@@ -780,7 +894,7 @@ class ImageGrouperApp(QMainWindow):
             self.embeddings_cache.update(result["data"])
             self.missing_in_cache = []
             self.btn_preproc.setText("特征已最新 ✓")
-            self.btn_preproc.setStyleSheet("QPushButton { background-color: #2b2d31; color: #23A559; border: 1px solid #23A559; border-radius: 6px; font-weight: bold; }")
+            self.btn_preproc.setStyleSheet("QPushButton { background-color: #1A1A1A; color: #107C41; border: 1px solid #107C41; font-weight: bold; }")
             self.progress_bar.setValue(100)
             
             if hasattr(self, 'current_folder'):
@@ -800,7 +914,6 @@ class ImageGrouperApp(QMainWindow):
         if not self.current_groups:
             return QMessageBox.warning(self, "提示", "当前还没有分类结果可供学习！\n请先使用准分类或拖拽分好组。")
             
-        # 🟢 1. 预统计即将学习的有效数据，给用户确认
         learn_summary = []
         valid_count = 0
         for group_name, images in self.current_groups.items():
@@ -812,7 +925,6 @@ class ImageGrouperApp(QMainWindow):
         if valid_count == 0:
             return QMessageBox.warning(self, "提示", "当前没有有效的标准分组可供学习！")
 
-        # 🟢 2. 强制二次确认弹窗
         reply = QMessageBox.question(
             self, "学习前人工核对确认", 
             f"即将把以下 {valid_count} 张图片的特征吸纳入大脑：\n" + 
@@ -823,7 +935,6 @@ class ImageGrouperApp(QMainWindow):
         if reply == QMessageBox.StandardButton.No:
             return
 
-        # 3. 开始录入记忆
         for group_name, images in self.current_groups.items():
             if any(x in group_name for x in ["其他", "未归类"]): continue
             for img_path in images:
@@ -849,7 +960,6 @@ class ImageGrouperApp(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "训练失败", str(e))
 
-    # 🟢 新增：洗脑重置方法
     def clear_memory(self):
         reply = QMessageBox.warning(
             self, "危险操作", 
@@ -874,7 +984,6 @@ class ImageGrouperApp(QMainWindow):
             with open(path, "rb") as f: imported_data = pickle.load(f)
             if "memory_db" not in imported_data: raise ValueError("格式不支持，请选择本工具导出的 pkl")
             
-            # 融合记忆：合并两个字典
             self.memory_db.update(imported_data["memory_db"])
             
             X = [item[0] for item in self.memory_db.values()]
@@ -913,16 +1022,17 @@ class ImageGrouperApp(QMainWindow):
             if not images: continue
             
             group_box = QGroupBox(f"{group_name} ({len(images)} 张)")
+            # 适配新高对比度深色模式的 QGroupBox 样式
             group_box.setStyleSheet("""
                 QGroupBox { 
-                    border: 1px solid #2b2d31; 
+                    border: 1px solid #2D2D2D; 
                     border-radius: 8px; 
                     margin-top: 18px; 
-                    background-color: #1e1f22; /* 分组块的底色 */
+                    background-color: #1A1A1A; 
                     font-weight: bold; 
-                    color: #DBDEE1; 
+                    color: #E0E0E0; 
                 }
-                QGroupBox::title { subcontrol-origin: margin; left: 20px; padding: 0 8px; color: #5865F2; }
+                QGroupBox::title { subcontrol-origin: margin; left: 20px; padding: 0 8px; color: #0078D4; }
             """)
             
             box_layout = QVBoxLayout(group_box)
@@ -934,7 +1044,6 @@ class ImageGrouperApp(QMainWindow):
             for img_path in images:
                 card = ImageCard(img_path)
                 card.double_clicked.connect(lambda path=img_path: ImageViewerDialog(path, self).exec())
-                # 若被删除进回收站，毫秒级要求主线程复写对账
                 card.on_delete.connect(lambda c: self.refresh_directory_state())
                 grid.add_widget(card)
                 
@@ -954,13 +1063,15 @@ class ImageGrouperApp(QMainWindow):
         dialog = QDialog(self)
         dialog.setWindowTitle("🗑️ 回收站")
         dialog.resize(800, 600)
-        dialog.setStyleSheet("background-color: #1e1f22; color: white;")
+        
         layout = QVBoxLayout(dialog)
         
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setStyleSheet("border: none;")
+        scroll.setStyleSheet("border: none; background-color: #0F0F0F;")
+        
         viewport = QWidget()
+        viewport.setStyleSheet("background-color: #0F0F0F;")
         view_layout = QVBoxLayout(viewport)
         
         grid = ResponsiveGridWidget()
@@ -979,6 +1090,10 @@ class ImageGrouperApp(QMainWindow):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+    
+    # === 关键：在此处全局应用注入的样式表 ===
+    app.setStyleSheet(STYLESHEET)
+    
     font = app.font()
     font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
     app.setFont(font)

@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
                              QLabel, QLineEdit, QPushButton, QFileDialog, 
                              QSpinBox, QDoubleSpinBox, QScrollArea, QGroupBox, 
                              QMessageBox, QComboBox, QStackedWidget,
-                             QProgressBar, QStyle, QDialog)
+                             QProgressBar, QStyle, QDialog, QMainWindow, QSplitter)
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QPixmap, QPalette
 
@@ -24,6 +24,177 @@ import torch
 import torchvision.transforms as transforms
 from sklearn.metrics.pairwise import cosine_similarity
 from transformers import CLIPProcessor, CLIPModel
+
+# --- 樣式表 (STYLESHEET) ---
+STYLESHEET = """
+QMainWindow { 
+    background-color: #0F0F0F; 
+}
+
+/* 针对侧边栏顶部进行微调，让其在视觉上更靠近窗口顶端 */
+#SidePanel { 
+    background-color: #161616; 
+    border-right: 1px solid #2D2D2D;
+}
+
+/* 全局窗口与基础背景 */
+QMainWindow, QDialog { 
+    background-color: #0F0F0F; 
+}
+
+QWidget { 
+    color: #E0E0E0; 
+    font-family: "Segoe UI", "PingFang SC", sans-serif; 
+}
+
+/* 解决 QListWidget 可能出现的白边或默认背景 */
+QListWidget { 
+    background-color: #0F0F0F; 
+    border: none; 
+    outline: none; 
+}
+
+/* 列表项背景 */
+QListWidget::item { 
+    background-color: #1A1A1A; 
+    margin: 5px 10px; 
+    border-radius: 8px; 
+    border: 1px solid #262626; 
+}
+QListWidget::item:selected { 
+    background-color: #262626; 
+    border: 1px solid #0078D4; 
+}
+
+/* 标题样式 */
+#SideTitle { 
+    color: #FFFFFF; 
+    font-size: 20px; 
+    font-weight: bold; 
+    margin-bottom: 5px; 
+    padding: 5px 0px;
+}
+
+/* 按钮样式：确保即便在非 Focus 状态下也是深色的 */
+QPushButton { 
+    background-color: #2D2D2D; 
+    color: #FFFFFF; 
+    border: 1px solid #3D3D3D; 
+    border-radius: 6px; 
+    padding: 8px; 
+    font-weight: 500; 
+}
+QPushButton:hover { 
+    background-color: #3D3D3D; 
+    border: 1px solid #555555;
+}
+QPushButton:disabled {
+    background-color: #1A1A1A;
+    color: #555555;
+    border: 1px solid #2D2D2D;
+}
+
+/* 主要操作按鈕特化 */
+QPushButton#primaryBtn { background-color: #0078D4; color: white; border: none; font-weight: bold; }
+QPushButton#primaryBtn:hover { background-color: #005A9E; }
+QPushButton#primaryBtn:disabled { background-color: #1A1A1A; color: #555555; }
+
+QPushButton#actionBtn { background-color: #0078D4; color: white; border: none; font-weight: bold; }
+QPushButton#actionBtn:hover { background-color: #005A9E; }
+QPushButton#actionBtn:disabled { background-color: #1A1A1A; color: #555555; }
+
+QPushButton#singleActionBtn { background-color: #CF6679; color: white; font-weight: bold; border-radius: 4px; padding: 6px; border: none;}
+QPushButton#singleActionBtn:hover { background-color: #B00020; }
+
+QLineEdit, QSpinBox, QDoubleSpinBox {
+    background-color: #1A1A1A; 
+    color: #FFFFFF; 
+    border: 1px solid #333333;
+    border-radius: 4px; 
+    padding: 6px 10px; 
+}
+
+/* 针对 QComboBox (下拉框) 进行独立高对比度优化 */
+QComboBox {
+    background-color: #1A1A1A; 
+    color: #FFFFFF; 
+    border: 1px solid #333333;
+    border-radius: 4px; 
+    padding: 6px 10px; 
+}
+
+/* 鼠标悬浮时边框高亮 */
+QComboBox:hover, QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus {
+    border: 1px solid #555555;
+}
+
+/* 修复下拉框展开后的列表文字对比度和背景 */
+QComboBox QAbstractItemView {
+    background-color: #252525;    
+    color: #FFFFFF;               
+    border: 1px solid #3D3D3D;    
+    selection-background-color: #0078D4; 
+    selection-color: #FFFFFF;     
+    outline: none;                
+}
+
+/* 滚动条深色化 */
+QScrollBar:vertical {
+    border: none;
+    background: #0F0F0F;
+    width: 10px;
+}
+QScrollBar::handle:vertical {
+    background: #333333;
+    border-radius: 5px;
+}
+QScrollArea { 
+    border: none; 
+    background-color: #0F0F0F; 
+}
+
+/* 标签提示色 */
+QLabel#Hint { 
+    color: #0078D4; 
+    font-weight: bold; 
+    text-transform: uppercase; 
+    font-size: 11px; 
+    margin-top: 15px; 
+}
+
+/* 修改 QSplitter 分割线，去除默认的刺眼白边 */
+QSplitter::handle {
+    background-color: #2D2D2D; 
+    width: 1px;
+}
+
+/* 補充 QGroupBox 與 QProgressBar 樣式以適配新主題 */
+QGroupBox { 
+    font-weight: bold; 
+    border: 1px solid #2D2D2D; 
+    border-radius: 6px; 
+    margin-top: 12px; 
+    background-color: #161616; 
+}
+QGroupBox::title { 
+    subcontrol-origin: margin; 
+    left: 10px; 
+    padding: 0 5px; 
+    color: #0078D4; 
+}
+QProgressBar { 
+    border: 1px solid #333333; 
+    border-radius: 4px; 
+    text-align: center; 
+    color: white; 
+    background-color: #1A1A1A; 
+}
+QProgressBar::chunk { 
+    background-color: #0078D4; 
+    border-radius: 3px;
+}
+"""
+
 
 # --- 影像美感模型封裝 (自動檢測 GPU) ---
 class AestheticScorer:
@@ -56,34 +227,23 @@ class AestheticScorer:
                 print(f"模型載入失敗: {e}")
                 self.is_ready = False
 
-    def get_score(self, image_path):
-        """ 核心評分邏輯 """
-        try:
-            # A. 讀取影像 (支援中文路徑)
-            img_data = np.fromfile(image_path, dtype=np.uint8)
-            img_cv = cv2.imdecode(img_data, cv2.IMREAD_COLOR)
-            if img_cv is None: return 0.0
-
-            # B. 傳統技術分 (CV Score)
-            gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
-            sharpness = np.log1p(cv2.Laplacian(gray, cv2.CV_64F).var()) * 15
-            contrast = gray.std()
-            cv_score = sharpness + (contrast * 0.5)
-
-            # C. AI 語義分 (只有在模型準備好時才執行)
-            ai_score = 50.0 # 預設中位數
-            if self.is_ready:
-                pil_img = Image.fromarray(cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB))
+    def get_ai_score(self, pil_img):
+        """ 取得 AI 美感分數 """
+        if not self.is_ready:
+            self.load_model()
+            
+        ai_score = 50.0 # 預設中位數
+        if self.is_ready:
+            try:
                 inputs = self.processor(text=self.labels, images=pil_img, return_tensors="pt", padding=True).to(self.device)
                 with torch.no_grad():
                     outputs = self.model(**inputs)
                     probs = outputs.logits_per_image.softmax(dim=1)
                     ai_score = probs[0][0].item() * 100
+            except Exception as e:
+                print(f"AI 評分錯誤: {e}")
+        return ai_score
 
-            # 混合加權 (AI 70% + CV 30%)
-            return float((ai_score * 0.7) + (cv_score * 0.3))
-        except:
-            return 0.0
 
 # 建立全域單例，避免重複初始化模型
 _GLOBAL_SCORER = AestheticScorer()
@@ -141,7 +301,6 @@ def calculate_aesthetic_score(image_path):
         return 0.0
 
 # --- 自訂可點擊的圖片標籤 (用於彈出大圖) ---
-# 修改 ClickableLabel 的样式以适配深色模式
 class ClickableLabel(QLabel):
     clicked = pyqtSignal(str)
 
@@ -152,14 +311,14 @@ class ClickableLabel(QLabel):
         self.setStyleSheet(
             """
             QLabel {
-                border: 1px solid #444444;
+                border: 1px solid #2D2D2D;
                 padding: 2px;
-                background-color: #222222;
+                background-color: #1A1A1A;
                 color: #FFFFFF;
             }
             QLabel:hover {
-                border: 1px solid #888888;
-                background-color: #333333;
+                border: 1px solid #0078D4;
+                background-color: #262626;
             }
             """
         )
@@ -409,58 +568,47 @@ class ScannerThread(QThread):
         return groups, single_files
 
 
-# --- 主圖形介面 ---
-class ImageGrouperApp(QWidget):
+# --- 主圖形介面 (已更新為 QMainWindow) ---
+class ImageGrouperApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.groups_data = []      
         self.single_files = []     
         self.group_widgets = []    
         self.initUI()
-        self.apply_stylesheet()
-
-    def apply_stylesheet(self):
-        style = """
-        QWidget { font-family: "Segoe UI", "Microsoft JhengHei", sans-serif; font-size: 10pt; color: #FFFFFF; background-color: #121212; }
-        QGroupBox { font-weight: bold; border: 1px solid #444444; border-radius: 6px; margin-top: 10px; background-color: #1E1E1E; }
-        QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 3px 0 3px; color: #BB86FC; }
-        QLineEdit { padding: 4px; border: 1px solid #555555; border-radius: 4px; background-color: #1E1E1E; color: #FFFFFF; }
-        QLineEdit:focus { border: 1px solid #BB86FC; }
-        QPushButton { padding: 5px 10px; border-radius: 4px; background-color: #333333; border: 1px solid #555555; color: #FFFFFF; }
-        QPushButton:hover { background-color: #444444; }
-        QPushButton#primaryBtn { background-color: #BB86FC; color: white; border: none; font-weight: bold; padding: 8px; }
-        QPushButton#primaryBtn:hover { background-color: #985EFF; }
-        QPushButton#primaryBtn:disabled { background-color: #5A5A5A; }
-        QPushButton#actionBtn { background-color: #03DAC6; color: black; border: none; font-weight: bold; padding: 8px; }
-        QPushButton#actionBtn:hover { background-color: #018786; }
-        QPushButton#actionBtn:disabled { background-color: #5A5A5A; }
-        QPushButton#singleActionBtn { background-color: #CF6679; color: white; font-weight: bold; border-radius: 4px; padding: 6px; }
-        QPushButton#singleActionBtn:hover { background-color: #B00020; }
-        QComboBox, QSpinBox, QDoubleSpinBox { padding: 4px; border: 1px solid #555555; border-radius: 4px; background-color: #1E1E1E; color: #FFFFFF; }
-        QProgressBar { border: 1px solid #444444; border-radius: 4px; text-align: center; color: white; background-color: #333333; }
-        QProgressBar::chunk { background-color: #BB86FC; width: 10px; }
-        QScrollArea { border: 1px solid #444444; background-color: #121212; border-radius: 6px; }
-        """
-        self.setStyleSheet(style)
+        self.setStyleSheet(STYLESHEET)
 
     def initUI(self):
         self.setWindowTitle('Image Similarity Pro (美感篩選版)')
         self.resize(1100, 750)
         
-        main_layout = QHBoxLayout()
-        main_layout.setContentsMargins(10, 10, 10, 10)
-        main_layout.setSpacing(15)
+        # 設置 Central Widget
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+        
+        # 使用水平佈局包裹 Splitter
+        main_layout = QHBoxLayout(central_widget)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        
+        # 建立 Splitter 替代原本的 QHBoxLayout，以利應用 CSS 的分割線樣式
+        splitter = QSplitter(Qt.Orientation.Horizontal)
 
         # ==================== 左側：緊湊功能區 ====================
         left_panel = QWidget()
-        left_panel.setMaximumWidth(320)
+        left_panel.setObjectName("SidePanel") # 套用 CSS 的 #SidePanel
+        left_panel.setMaximumWidth(340)
         left_layout = QVBoxLayout(left_panel)
-        left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.setSpacing(10)
+        left_layout.setContentsMargins(15, 15, 15, 15)
+        left_layout.setSpacing(12)
+
+        # 側邊欄標題
+        title_lbl = QLabel("Image Similarity Pro")
+        title_lbl.setObjectName("SideTitle")
+        left_layout.addWidget(title_lbl)
 
         dir_icon = self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon)
 
-        # 1. 路徑設定區 (移除了輸出目錄)
+        # 1. 路徑設定區
         path_group = QGroupBox("📁 檔案目錄設定")
         path_layout = QVBoxLayout()
         path_layout.addWidget(QLabel("輸入資料夾 (執行後建立 Trash 資料夾):"))
@@ -547,7 +695,7 @@ class ImageGrouperApp(QWidget):
 
         self.lbl_status = QLabel("就緒。")
         self.lbl_status.setWordWrap(True)
-        self.lbl_status.setStyleSheet("color: #005A9E; font-size: 9pt; margin-top: 5px;")
+        self.lbl_status.setStyleSheet("color: #0078D4; font-size: 9pt; margin-top: 5px;")
         exec_layout.addWidget(self.lbl_status)
         
         self.progress_bar = QProgressBar()
@@ -564,7 +712,7 @@ class ImageGrouperApp(QWidget):
         left_layout.addWidget(exec_group)
         
         left_layout.addStretch()
-        main_layout.addWidget(left_panel)
+        splitter.addWidget(left_panel)
 
         # ==================== 右側：巨大預覽顯示區 ====================
         self.scroll_area = QScrollArea()
@@ -574,8 +722,11 @@ class ImageGrouperApp(QWidget):
         self.scroll_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.scroll_area.setWidget(self.scroll_content)
         
-        main_layout.addWidget(self.scroll_area, stretch=1) 
-        self.setLayout(main_layout)
+        splitter.addWidget(self.scroll_area)
+        
+        # 將 Splitter 比例設為大約 1:3
+        splitter.setSizes([340, 760])
+        main_layout.addWidget(splitter)
 
     def change_algo_params(self, index):
         self.param_stack.setCurrentIndex(index)
@@ -661,7 +812,6 @@ class ImageGrouperApp(QWidget):
         
         for idx, group in enumerate(self.groups_data):
             group_box = QGroupBox(f"📂 分組 {idx + 1} (共 {len(group)} 張)")
-            group_box.setStyleSheet("QGroupBox { background-color: #FFFFFF; }")
             
             img_layout = QHBoxLayout()
             img_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
@@ -690,7 +840,7 @@ class ImageGrouperApp(QWidget):
                     lbl_info.setStyleSheet("color: #D2691E; font-weight: bold; font-size: 11pt;")
                 else:
                     lbl_info = QLabel(f"🗑️ 待刪 (美感分: {score:.1f})")
-                    lbl_info.setStyleSheet("color: #666666;")
+                    lbl_info.setStyleSheet("color: #888888;")
                 
                 lbl_info.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 v_layout.addWidget(lbl_info)
@@ -705,7 +855,6 @@ class ImageGrouperApp(QWidget):
             inner_scroll.setWidgetResizable(True)
             inner_scroll.setWidget(scroll_widget)
             inner_scroll.setFixedHeight(230) 
-            inner_scroll.setStyleSheet("border: none;")
 
             # 處理單組的按鈕
             btn_single_action = QPushButton("🗑️ 處理此組 (保留最佳，其餘移至 Trash)")
@@ -777,7 +926,7 @@ class ImageGrouperApp(QWidget):
         self.lbl_status.setText("操作完畢。等待下一次任務。")
         self.progress_bar.setValue(0)
 
-# 在主窗口中设置深色模式
+# 系統啟動入口
 class DarkModeApp(QApplication):
     def __init__(self, args):
         super().__init__(args)
@@ -799,7 +948,6 @@ class DarkModeApp(QApplication):
         palette.setColor(QPalette.ColorRole.HighlightedText, Qt.GlobalColor.white)
         self.setPalette(palette)
 
-# 修改主程序入口以使用 DarkModeApp
 if __name__ == "__main__":
     app = DarkModeApp(sys.argv)
     ex = ImageGrouperApp()
