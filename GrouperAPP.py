@@ -6,6 +6,7 @@ import shutil
 import platform
 import subprocess
 import traceback
+import ctypes
 
 # ==========================================
 # 全局样式表 (STYLESHEET)
@@ -563,6 +564,18 @@ class ImageGrouperApp(QMainWindow):
         super().__init__()
         self.setWindowTitle("Image Grouper AI - Core")
         self.resize(1280, 800)
+        
+        # 将 Windows 操作系统原生窗口标题栏设为深色
+        if platform.system() == "Windows":
+            try:
+                hwnd = int(self.winId())
+                dark_mode = ctypes.c_int(1)
+                # DWMWA_USE_IMMERSIVE_DARK_MODE 的值为 20 (Win11/新版Win10) 或 19 (旧版Win10)
+                ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(dark_mode), ctypes.sizeof(dark_mode))
+                ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 19, ctypes.byref(dark_mode), ctypes.sizeof(dark_mode))
+            except Exception:
+                pass
+
         # 全局样式交由 QApplication 应用 STYLESHEET
         
         self.embeddings_cache = {}
