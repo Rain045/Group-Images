@@ -199,14 +199,7 @@ QProgressBar::chunk {
 # --- 影像美感模型封裝 (自動檢測 GPU) ---
 class AestheticScorer:
     def __init__(self):
-        # 自動偵測 GPU
-        if torch.cuda.is_available():
-            self.device = "cuda"
-        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-            self.device = "mps"
-        else:
-            self.device = "cpu"
-        
+        self.device = None
         self.model = None
         self.processor = None
         self.is_ready = False  # 新增旗標，確認模型是否加載成功
@@ -215,6 +208,14 @@ class AestheticScorer:
         """ 顯式加載模型，並確保移動到正確設備 """
         if not self.is_ready:
             try:
+                # 延遲偵測 GPU，加速程式啟動
+                if torch.cuda.is_available():
+                    self.device = "cuda"
+                elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                    self.device = "mps"
+                else:
+                    self.device = "cpu"
+                    
                 # 指定使用 CLIP 模型
                 model_id = "openai/clip-vit-base-patch32"
                 self.model = CLIPModel.from_pretrained(model_id).to(self.device)

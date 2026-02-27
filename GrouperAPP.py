@@ -140,37 +140,17 @@ QSplitter::handle {
 # ==========================================
 import numpy as np
 from PIL import Image, ImageFile
+import importlib.util
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
-HAS_OPENVINO = False
-HAS_TORCH = False
-HAS_CUDA = False
-HAS_SKLEARN = False
-
-try:
-    import openvino.runtime as ov
-    HAS_OPENVINO = True
-except ImportError:
-    try:
-        import openvino as ov
-        HAS_OPENVINO = True
-    except ImportError: pass
-
-try:
-    import torch
-    from transformers import CLIPProcessor, CLIPModel
-    HAS_TORCH = True
-    HAS_CUDA = torch.cuda.is_available()
-except ImportError: pass
-
-try:
-    from sklearn.cluster import DBSCAN
-    from sklearn.svm import SVC
-    HAS_SKLEARN = True
-except ImportError: pass
+# 延迟加载重型计算库以优化启动速度
+HAS_OPENVINO = importlib.util.find_spec("openvino") is not None
+HAS_TORCH = importlib.util.find_spec("torch") is not None
+HAS_SKLEARN = importlib.util.find_spec("sklearn") is not None
+HAS_CUDA = HAS_TORCH
 
 
 # ==========================================
@@ -203,12 +183,17 @@ class ModelManager:
         if cls._processor is not None and cls._current_backend == backend_name and cls._ov_path == ov_path:
             return
 
+        from transformers import CLIPProcessor
         is_openvino = "OpenVINO" in backend_name
         cls._current_backend = backend_name
         cls._ov_path = ov_path
         cls._processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
 
         if is_openvino:
+            try:
+                import openvino.runtime as ov
+            except ImportError:
+                import openvino as ov
             if not ov_path or not os.path.exists(ov_path):
                 raise FileNotFoundError(f"OpenVINO 模型路径无效: {ov_path}")
             core = ov.Core()
@@ -217,8 +202,12 @@ class ModelManager:
             cls._text_model = compiled_model
             cls._torch_model = None
         else:
-            cls._device = "cuda" if "CUDA" in backend_name and HAS_CUDA else "cpu"
-            cls._torch_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(cls._device)
+            import torch
+            from transformers import CLIPModel
+            cls._device = "cuda" if "CUDA" in backend_name and torch.cuda.is_available() else "cpu"
+            cls._torch_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(cls._device).eval()
+            if cls._device == "cuda" and hasattr(torch.backends, 'cudnn'):
+                torch.backends.cudnn.benchmark = True
             cls._image_model = None
             cls._text_model = None
 
@@ -244,6 +233,8 @@ class Worker(QThread):
         try:
             backend = self.params.get("backend", "")
             is_openvino = "OpenVINO" in backend
+            if not is_openvino:
+                import torch
             
             if self.task_type == "PREPROC" or self.params.get("mode") == "text":
                 self.progress.emit(0, "正在初始化模型引擎...")
@@ -289,7 +280,8 @@ class Worker(QThread):
                             embeddings[img_path] = img_features.flatten()
                         else:
                             inputs = processor(images=image, return_tensors="pt").to(device)
-                            with torch.no_grad():
+                            infer_ctx = torch.inference_mode() if hasattr(torch, 'inference_mode') else torch.no_grad()
+                            with infer_ctx:
                                 img_outputs = torch_model.get_image_features(**inputs)
                                 img_features = img_outputs.pooler_output if getattr(img_outputs, "pooler_output", None) is not None else img_outputs[0]
                                 if img_features.shape[-1] != 512 and hasattr(torch_model, "visual_projection"):
@@ -333,7 +325,8 @@ class Worker(QThread):
                         if text_features is None: text_features = list(res.values())[0]
                     else:
                         inputs = processor(text=tags, return_tensors="pt", padding=True).to(device)
-                        with torch.no_grad():
+                        infer_ctx = torch.inference_mode() if hasattr(torch, 'inference_mode') else torch.no_grad()
+                        with infer_ctx:
                             text_outputs = torch_model.get_text_features(**inputs)
                             text_features = text_outputs.pooler_output if getattr(text_outputs, "pooler_output", None) is not None else text_outputs[0]
                             if text_features.shape[-1] != 512 and hasattr(torch_model, "text_projection"):
@@ -354,20 +347,41 @@ class Worker(QThread):
                         self.progress.emit(int((i + 1) / total * 100), "进行语义比对...")
 
                 elif mode == "ai":
-                    eps_val = {0: 0.12, 1: 0.20, 2: 0.35}.get(self.params.get("eps_level", 1), 0.20)
                     paths = list(img_embeddings.keys())
                     matrix = np.array(list(img_embeddings.values()))
                     if len(matrix.shape) == 1: matrix = matrix.reshape(1, -1)
                         
-                    dbscan = DBSCAN(eps=eps_val, min_samples=2, metric='cosine')
-                    labels = dbscan.fit_predict(matrix)
+                    algo_choice = self.params.get("algo", "HDBSCAN")
+                    if "HDBSCAN" in algo_choice:
+                        try:
+                            # 尝试使用对密度不均匀数据更鲁棒的 HDBSCAN (scikit-learn >= 1.3)
+                            from sklearn.cluster import HDBSCAN
+                            min_size = max(2, min(5, len(matrix) // 15))
+                            clusterer = HDBSCAN(min_cluster_size=min_size, metric='euclidean')
+                            labels = clusterer.fit_predict(matrix)
+                            algo_name = "HDBSCAN"
+                        except ImportError:
+                            # 降级回退
+                            from sklearn.cluster import DBSCAN
+                            eps_val = {0: 0.12, 1: 0.20, 2: 0.35}.get(self.params.get("eps_level", 1), 0.20)
+                            dynamic_min_samples = max(2, min(5, len(matrix) // 20))
+                            dbscan = DBSCAN(eps=eps_val, min_samples=dynamic_min_samples, metric='cosine')
+                            labels = dbscan.fit_predict(matrix)
+                            algo_name = "DBSCAN (降级)"
+                    else:
+                        from sklearn.cluster import DBSCAN
+                        eps_val = {0: 0.12, 1: 0.20, 2: 0.35}.get(self.params.get("eps_level", 1), 0.20)
+                        dynamic_min_samples = max(2, min(5, len(matrix) // 20))
+                        dbscan = DBSCAN(eps=eps_val, min_samples=dynamic_min_samples, metric='cosine')
+                        labels = dbscan.fit_predict(matrix)
+                        algo_name = "DBSCAN"
 
                     result_groups["独立图片 (未归类)"] = []
                     for i, label in enumerate(labels):
                         if self._is_cancelled: raise InterruptedError("任务中止")
                         if label == -1: result_groups["独立图片 (未归类)"].append(paths[i])
-                        else: result_groups.setdefault(f"智能发现组 {label + 1}", []).append(paths[i])
-                        self.progress.emit(int((i + 1) / total * 100), "进行无监督聚类...")
+                        else: result_groups.setdefault(f"智能发现组 ({algo_name}) {label + 1}", []).append(paths[i])
+                        self.progress.emit(int((i + 1) / total * 100), f"进行无监督聚类 ({algo_name})...")
 
                 elif mode == "svm":
                     clf = self.params.get("svm_clf")
@@ -677,10 +691,16 @@ class ImageGrouperApp(QMainWindow):
 
         # Page 1: AI
         page_ai = QWidget(); l_ai = QVBoxLayout(page_ai); l_ai.setContentsMargins(0, 0, 0, 0)
+        
+        self.combo_algo = QComboBox()
+        self.combo_algo.addItems(["HDBSCAN (自适应密度)", "DBSCAN (固定半径)"])
+        l_ai.addWidget(self.create_label("聚类算法:"))
+        l_ai.addWidget(self.combo_algo)
+        
         self.combo_eps = QComboBox()
         self.combo_eps.addItems(["细粒度", "平衡 (推荐)", "粗粒度"])
         self.combo_eps.setCurrentIndex(1)
-        l_ai.addWidget(self.create_label("聚类灵敏度 (DBSCAN):"))
+        l_ai.addWidget(self.create_label("聚类灵敏度 (仅适用于DBSCAN):"))
         l_ai.addWidget(self.combo_eps)
         self.stack_mode.addWidget(page_ai)
         
@@ -803,7 +823,7 @@ class ImageGrouperApp(QMainWindow):
         if not hasattr(self, 'current_folder') or not self.current_folder: return
             
         valid_exts = ('.jpg', '.jpeg', '.png', '.bmp', '.webp')
-        self.target_files = [os.path.join(self.current_folder, f) for f in os.listdir(self.current_folder) if f.lower().endswith(valid_exts)]
+        self.target_files = [f.path for f in os.scandir(self.current_folder) if f.is_file() and f.name.lower().endswith(valid_exts)]
         
         keys_to_remove = [k for k in self.embeddings_cache.keys() if k not in self.target_files]
         for k in keys_to_remove: del self.embeddings_cache[k]
@@ -879,7 +899,9 @@ class ImageGrouperApp(QMainWindow):
         params = {"mode": mode, "embeddings": self.embeddings_cache, "backend": self.combo_backend.currentText()}
         
         if mode == "text": params["tags"] = self.inp_tags.text()
-        elif mode == "ai": params["eps_level"] = self.combo_eps.currentIndex()
+        elif mode == "ai": 
+            params["eps_level"] = self.combo_eps.currentIndex()
+            params["algo"] = self.combo_algo.currentText()
         elif mode == "svm": params["svm_clf"] = self.svm_clf
         if "OpenVINO" in params["backend"]: params["ov_path"] = self.inp_ov_path.text()
 
@@ -962,6 +984,7 @@ class ImageGrouperApp(QMainWindow):
             return QMessageBox.warning(self, "提示", "有效学习组别少于 2 个！\nAI至少需要知道两个事物之间的区别。")
             
         try:
+            from sklearn.svm import SVC
             self.svm_clf = SVC(kernel='linear', class_weight='balanced')
             self.svm_clf.fit(X, y)
             
@@ -1002,6 +1025,7 @@ class ImageGrouperApp(QMainWindow):
             X = [item[0] for item in self.memory_db.values()]
             y = [item[1] for item in self.memory_db.values()]
             
+            from sklearn.svm import SVC
             self.svm_clf = SVC(kernel='linear', class_weight='balanced')
             self.svm_clf.fit(X, y)
             
@@ -1101,7 +1125,22 @@ class ImageGrouperApp(QMainWindow):
         layout.addWidget(scroll)
         dialog.exec()
 
+def global_exception_handler(exc_type, exc_value, exc_traceback):
+    err_msg = ''.join(traceback.format_exception(exc_type, exc_value, exc_traceback))
+    print("程序崩溃:\n", err_msg)
+    app = QApplication.instance()
+    if not app:
+        app = QApplication(sys.argv)
+    msg_box = QMessageBox()
+    msg_box.setIcon(QMessageBox.Icon.Critical)
+    msg_box.setWindowTitle("致命错误")
+    msg_box.setText("程序遇到未处理的异常，即将退出。")
+    msg_box.setDetailedText(err_msg)
+    msg_box.exec()
+    sys.exit(1)
+
 if __name__ == "__main__":
+    sys.excepthook = global_exception_handler
     app = QApplication(sys.argv)
     
     # === 关键：在此处全局应用注入的样式表 ===
