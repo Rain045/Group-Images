@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
                              QMessageBox, QComboBox, QStackedWidget,
                              QProgressBar, QStyle, QDialog)
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
-from PyQt6.QtGui import QPixmap
+from PyQt6.QtGui import QPixmap, QPalette
 
 # ImageHash
 from PIL import Image
@@ -141,14 +141,28 @@ def calculate_aesthetic_score(image_path):
         return 0.0
 
 # --- 自訂可點擊的圖片標籤 (用於彈出大圖) ---
+# 修改 ClickableLabel 的样式以适配深色模式
 class ClickableLabel(QLabel):
     clicked = pyqtSignal(str)
-    
+
     def __init__(self, img_path, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.img_path = img_path
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setStyleSheet("border: 1px solid #DDDDDD; padding: 2px; background-color: white;")
+        self.setStyleSheet(
+            """
+            QLabel {
+                border: 1px solid #444444;
+                padding: 2px;
+                background-color: #222222;
+                color: #FFFFFF;
+            }
+            QLabel:hover {
+                border: 1px solid #888888;
+                background-color: #333333;
+            }
+            """
+        )
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -407,25 +421,25 @@ class ImageGrouperApp(QWidget):
 
     def apply_stylesheet(self):
         style = """
-        QWidget { font-family: "Segoe UI", "Microsoft JhengHei", sans-serif; font-size: 10pt; color: #333333; }
-        QGroupBox { font-weight: bold; border: 1px solid #CCCCCC; border-radius: 6px; margin-top: 10px; background-color: #FAFAFA; }
-        QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 3px 0 3px; color: #005A9E; }
-        QLineEdit { padding: 4px; border: 1px solid #BDBDBD; border-radius: 4px; background-color: #FFFFFF; }
-        QLineEdit:focus { border: 1px solid #0078D7; }
-        QPushButton { padding: 5px 10px; border-radius: 4px; background-color: #E1E1E1; border: 1px solid #ADADAD; }
-        QPushButton:hover { background-color: #D4D4D4; }
-        QPushButton#primaryBtn { background-color: #0078D7; color: white; border: none; font-weight: bold; padding: 8px; }
-        QPushButton#primaryBtn:hover { background-color: #005A9E; }
-        QPushButton#primaryBtn:disabled { background-color: #A0C5E8; }
-        QPushButton#actionBtn { background-color: #107C41; color: white; border: none; font-weight: bold; padding: 8px; }
-        QPushButton#actionBtn:hover { background-color: #0B5A2F; }
-        QPushButton#actionBtn:disabled { background-color: #8CC2A0; }
-        QPushButton#singleActionBtn { background-color: #D83B01; color: white; font-weight: bold; border-radius: 4px; padding: 6px; }
-        QPushButton#singleActionBtn:hover { background-color: #A82E00; }
-        QComboBox, QSpinBox, QDoubleSpinBox { padding: 4px; border: 1px solid #BDBDBD; border-radius: 4px; }
-        QProgressBar { border: 1px solid #CCCCCC; border-radius: 4px; text-align: center; color: black; }
-        QProgressBar::chunk { background-color: #0078D7; width: 10px; }
-        QScrollArea { border: 1px solid #CCCCCC; background-color: #EEEEEE; border-radius: 6px; }
+        QWidget { font-family: "Segoe UI", "Microsoft JhengHei", sans-serif; font-size: 10pt; color: #FFFFFF; background-color: #121212; }
+        QGroupBox { font-weight: bold; border: 1px solid #444444; border-radius: 6px; margin-top: 10px; background-color: #1E1E1E; }
+        QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 3px 0 3px; color: #BB86FC; }
+        QLineEdit { padding: 4px; border: 1px solid #555555; border-radius: 4px; background-color: #1E1E1E; color: #FFFFFF; }
+        QLineEdit:focus { border: 1px solid #BB86FC; }
+        QPushButton { padding: 5px 10px; border-radius: 4px; background-color: #333333; border: 1px solid #555555; color: #FFFFFF; }
+        QPushButton:hover { background-color: #444444; }
+        QPushButton#primaryBtn { background-color: #BB86FC; color: white; border: none; font-weight: bold; padding: 8px; }
+        QPushButton#primaryBtn:hover { background-color: #985EFF; }
+        QPushButton#primaryBtn:disabled { background-color: #5A5A5A; }
+        QPushButton#actionBtn { background-color: #03DAC6; color: black; border: none; font-weight: bold; padding: 8px; }
+        QPushButton#actionBtn:hover { background-color: #018786; }
+        QPushButton#actionBtn:disabled { background-color: #5A5A5A; }
+        QPushButton#singleActionBtn { background-color: #CF6679; color: white; font-weight: bold; border-radius: 4px; padding: 6px; }
+        QPushButton#singleActionBtn:hover { background-color: #B00020; }
+        QComboBox, QSpinBox, QDoubleSpinBox { padding: 4px; border: 1px solid #555555; border-radius: 4px; background-color: #1E1E1E; color: #FFFFFF; }
+        QProgressBar { border: 1px solid #444444; border-radius: 4px; text-align: center; color: white; background-color: #333333; }
+        QProgressBar::chunk { background-color: #BB86FC; width: 10px; }
+        QScrollArea { border: 1px solid #444444; background-color: #121212; border-radius: 6px; }
         """
         self.setStyleSheet(style)
 
@@ -763,8 +777,31 @@ class ImageGrouperApp(QWidget):
         self.lbl_status.setText("操作完畢。等待下一次任務。")
         self.progress_bar.setValue(0)
 
-if __name__ == '__main__':
-    app = QApplication(sys.argv)
+# 在主窗口中设置深色模式
+class DarkModeApp(QApplication):
+    def __init__(self, args):
+        super().__init__(args)
+        self.set_dark_mode()
+
+    def set_dark_mode(self):
+        palette = QPalette()
+        palette.setColor(QPalette.ColorRole.Window, Qt.GlobalColor.black)
+        palette.setColor(QPalette.ColorRole.WindowText, Qt.GlobalColor.white)
+        palette.setColor(QPalette.ColorRole.Base, Qt.GlobalColor.black)
+        palette.setColor(QPalette.ColorRole.AlternateBase, Qt.GlobalColor.darkGray)
+        palette.setColor(QPalette.ColorRole.ToolTipBase, Qt.GlobalColor.white)
+        palette.setColor(QPalette.ColorRole.ToolTipText, Qt.GlobalColor.white)
+        palette.setColor(QPalette.ColorRole.Text, Qt.GlobalColor.white)
+        palette.setColor(QPalette.ColorRole.Button, Qt.GlobalColor.darkGray)
+        palette.setColor(QPalette.ColorRole.ButtonText, Qt.GlobalColor.white)
+        palette.setColor(QPalette.ColorRole.BrightText, Qt.GlobalColor.red)
+        palette.setColor(QPalette.ColorRole.Highlight, Qt.GlobalColor.darkBlue)
+        palette.setColor(QPalette.ColorRole.HighlightedText, Qt.GlobalColor.white)
+        self.setPalette(palette)
+
+# 修改主程序入口以使用 DarkModeApp
+if __name__ == "__main__":
+    app = DarkModeApp(sys.argv)
     ex = ImageGrouperApp()
     ex.show()
     sys.exit(app.exec())
